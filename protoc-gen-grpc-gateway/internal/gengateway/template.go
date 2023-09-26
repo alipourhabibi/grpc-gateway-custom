@@ -347,11 +347,26 @@ var (
 )
 {{end}}
 {{template "request-func-signature" .}} {
+	var t []byte
+	var metadata runtime.ServerMetadata
+	token, err := utils.GetTokenFromBearer(req.Header.Get("Authorization"))
+	if err != nil {
+		return nil, metadata, err
+	}
 	requ := &authorization.SanitizeRequest{
 		Request: &authorization.Request{
 			Query: new(string),
 			Body: new(string),
 		},
+	}
+
+	requ.AccessToken = token
+	requ.Action = "read"
+	requ.Object = "logistic_transport_vehicle"
+	// TODO
+	*requ.Request.Query = "{}"
+	requ.Scope = []string{
+		"whole",
 	}
 	{{ $bodyentity := "" }}
 	protoReq := {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}{
@@ -366,7 +381,6 @@ var (
 		{{ end }}
 	{{ end }}
 	}
-	var metadata runtime.ServerMetadata
 {{if .Body}}
 	newReader, berr := utilities.IOReaderFactory(req.Body)
 	if berr != nil {
@@ -379,47 +393,14 @@ var (
 	if err := marshaler.NewDecoder(newReader()).Decode(&{{.Body.AssignableExpr "protoReq" .Method.Service.File.GoPkg.Path}}); err != nil && err != io.EOF  {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	t, err := json.Marshal(protoReq.Body)
+	t, err = json.Marshal(protoReq.Body)
 	if err != nil {
 		return nil, metadata, err
 	}
 
-	token, err := utils.GetTokenFromBearer(req.Header.Get("Authorization"))
-	if err != nil {
-		return nil, metadata, err
-	}
-
-	requ.AccessToken = token
-	requ.Action = "read"
-	requ.Object = "logistic_transport_vehicle"
 
 	*requ.Request.Body = string(t)
-	*requ.Request.Query = "{}"
-	requ.Scope = []string{
-		"whole",
-	}
 
-	newReq, err := Acl.Sanitize(ctx, requ)
-	if err != nil {
-		return nil, metadata, err
-	}
-
-	newQuery, err := utils.MetadataQuery(*newReq.Request.Query)
-	if err != nil {
-		return nil, metadata, err
-	}
-	protoReq.Q = newQuery
-
-	if newReq.Request.Body != nil {
-		t, err = json.Marshal(newReq.Request.Body)
-		if err != nil {
-			return nil, metadata, err
-		}
-		err = json.Unmarshal(t, protoReq.Body)
-		if err != nil {
-			return nil, metadata, err
-		}
-	}
 
 	{{- if and $AllowPatchFeature (eq (.HTTPMethod) "PATCH") (.FieldMaskField) (not (eq "*" .GetBodyFieldPath)) }}
 	if protoReq.{{.FieldMaskField}} == nil || len(protoReq.{{.FieldMaskField}}.GetPaths()) == 0 {
@@ -507,6 +488,29 @@ var (
 	metadata.HeaderMD = header
 	return stream, metadata, nil
 {{else}}
+	newReq, err := Acl.Sanitize(ctx, requ)
+	if err != nil {
+		return nil, metadata, err
+	}
+
+	newQuery, err := utils.MetadataQuery(*newReq.Request.Query)
+	if err != nil {
+		return nil, metadata, err
+	}
+	protoReq.Q = newQuery
+
+{{ if .Body }}
+	if newReq.Request.Body != nil {
+		t, err = json.Marshal(newReq.Request.Body)
+		if err != nil {
+			return nil, metadata, err
+		}
+		err = json.Unmarshal(t, protoReq.Body)
+		if err != nil {
+			return nil, metadata, err
+		}
+	}
+{{ end }}
 	data, err := client.{{.Method.GetName}}(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	if err != nil {
 		return nil, metadata, err
