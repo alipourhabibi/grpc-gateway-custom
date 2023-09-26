@@ -8,6 +8,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/internal/descriptor"
 	gen "github.com/grpc-ecosystem/grpc-gateway/v2/internal/generator"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway/internal/gengateway/configs"
 	"google.golang.org/grpc/grpclog"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/pluginpb"
@@ -29,6 +30,7 @@ func New(reg *descriptor.Registry, useRequestContext bool, registerFuncSuffix st
 	allowPatchFeature, standalone bool) gen.Generator {
 	var imports []descriptor.GoPackage
 	for _, pkgpath := range []string{
+		configs.Confs.AclImport,
 		"context",
 		"io",
 		"net/http",

@@ -49,6 +49,7 @@ func (b binding) GetBodyFieldStructName() (string, error) {
 // It sometimes returns true even though actually the binding does not need.
 // But it is not serious because it just results in a small amount of extra codes generated.
 func (b binding) HasQueryParam() bool {
+	return false
 	if b.Body != nil && len(b.Body.FieldPath) == 0 {
 		return false
 	}
@@ -239,11 +240,17 @@ It translates gRPC into RESTful JSON APIs.
 */{{end}}
 package {{.GoPkg.Name}}
 import (
+	"encoding/json"
 	{{range $i := .Imports}}{{if $i.Standard}}{{$i | printf "%s\n"}}{{end}}{{end}}
 
 	{{range $i := .Imports}}{{if not $i.Standard}}{{$i | printf "%s\n"}}{{end}}{{end}}
 )
 
+var Acl authorization.AuthorizationServiceClient
+
+func InitAcl(acl authorization.AuthorizationServiceClient) {
+	Acl = acl
+}
 // Suppress "imported and not used" errors
 var _ codes.Code
 var _ io.Reader
@@ -320,6 +327,14 @@ func request_{{.Method.Service.GetName}}_{{.Method.GetName}}_{{.Index}}(ctx cont
 
 	funcMap template.FuncMap = map[string]interface{}{
 		"camelIdentifier": casing.CamelIdentifier,
+		"Deref":           func(i *string) string { return *i },
+		"CustomCase": func(i string) string {
+			if len(i) > 0 {
+				i = i[1:]
+			}
+			i = strings.ReplaceAll(i, ".", "_")
+			return i
+		},
 	}
 
 	_ = template.Must(handlerTemplate.New("client-rpc-request-func").Funcs(funcMap).Parse(`
@@ -330,7 +345,22 @@ var (
 )
 {{end}}
 {{template "request-func-signature" .}} {
-	var protoReq {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}
+	requ := &authorization.SanitizeRequest{
+		Request: &authorization.Request{
+			Query: new(string),
+			Body: new(string),
+		},
+	}
+	protoReq := {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}{
+	{{ range .Binding.Method.RequestType.Fields }}
+		{{ if eq (Deref .Name) "body" }}
+		Body: &{{ CustomCase .TypeName }}{},
+		{{ end }}
+		{{ if eq (Deref .Name) "query" }}
+		Query: &{{ CustomCase .TypeName }}{},
+		{{ end }}
+	{{ end }}
+	}
 	var metadata runtime.ServerMetadata
 {{if .Body}}
 	newReader, berr := utilities.IOReaderFactory(req.Body)
@@ -353,6 +383,12 @@ var (
 			}
 	}
 	{{end}}
+	t, err := json.Marshal(protoReq.Body)
+	if err != nil {
+		return nil, metadata, err
+	}
+	*requ.Request.Body = string(t)
+	*requ.Request.Query = req.URL.Query().Encode()
 {{end}}
 {{if .PathParams}}
 	var (
@@ -411,14 +447,13 @@ var (
 {{end}}
 	{{end}}
 {{end}}
-{{if .HasQueryParam}}
-	if err := req.ParseForm(); err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_{{.Method.Service.GetName}}_{{.Method.GetName}}_{{.Index}}); err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-{{end}}
+	/*
+		queries := req.URL.Query().Encode()
+		tok, err := Auth.GetTokenFromBearer(r.Header.Get("Authorization"))
+		if err != nil {
+			res = append(res, err)
+		}
+	*/
 {{if .Method.GetServerStreaming}}
 	stream, err := client.{{.Method.GetName}}(ctx, &protoReq)
 	if err != nil {
@@ -777,4 +812,13 @@ var (
 	{{end}}
 )
 {{end}}`))
+
+	aclTemplate = template.Must(template.New("acl").Parse(`
+	requ := &auth_authorization.SanitizeRequest{
+		Request: &auth_authorization.Request{
+			Body:  &temp,
+			Query: &temp,
+		},
+	}
+`))
 )
