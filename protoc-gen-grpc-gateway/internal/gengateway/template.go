@@ -353,10 +353,12 @@ var (
 			Body: new(string),
 		},
 	}
+	{{ $bodyentity := "" }}
 	protoReq := {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}{
 	{{ range .Binding.Method.RequestType.Fields }}
 		// {{ . }}
 		{{ if eq (Deref .Name) "body" }}
+		{{ $bodyentity = .JsonName }}
 		Body: &{{ .JsonName }}{},
 		{{ end }}
 		{{ if eq (Deref .Name) "query" }}
@@ -505,9 +507,10 @@ var (
 	metadata.HeaderMD = header
 	return stream, metadata, nil
 {{else}}
-	// TODO
 	data, err := client.{{.Method.GetName}}(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	// return msg, metadata, err
+	if err != nil {
+		return nil, metadata, err
+	}
 
 	decodedToken, err := Authentication.Decrypt(ctx, &authentication.AccessToken{
 		AccessToken: token,
@@ -528,8 +531,12 @@ var (
 	if err != nil {
 		return nil, metadata, err
 	}
-	// TODO
-	return nil, metadata, err
+	response := {{ $bodyentity }}{}
+	err = json.Unmarshal(t, &response)
+	if err != nil {
+		return nil, metadata, err
+	}
+	return &response, metadata, err
 
 {{end}}
 }`))
