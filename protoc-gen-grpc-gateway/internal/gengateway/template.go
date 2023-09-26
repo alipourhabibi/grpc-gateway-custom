@@ -247,9 +247,11 @@ import (
 )
 
 var Acl authorization.AuthorizationServiceClient
+var Authentication authentication.AuthenticationServiceClient
 
-func InitAcl(acl authorization.AuthorizationServiceClient) {
+func InitAcl(acl authorization.AuthorizationServiceClient, auth authentication.AuthenticationServiceClient) {
 	Acl = acl
+	Authentication = auth
 }
 // Suppress "imported and not used" errors
 var _ codes.Code
@@ -353,11 +355,12 @@ var (
 	}
 	protoReq := {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}{
 	{{ range .Binding.Method.RequestType.Fields }}
+		// {{ . }}
 		{{ if eq (Deref .Name) "body" }}
-		Body: &{{ CustomCase .TypeName }}{},
+		Body: &{{ .JsonName }}{},
 		{{ end }}
 		{{ if eq (Deref .Name) "query" }}
-		Query: &{{ CustomCase .TypeName }}{},
+		Query: &{{ .JsonName }}{},
 		{{ end }}
 	{{ end }}
 	}
@@ -374,6 +377,48 @@ var (
 	if err := marshaler.NewDecoder(newReader()).Decode(&{{.Body.AssignableExpr "protoReq" .Method.Service.File.GoPkg.Path}}); err != nil && err != io.EOF  {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
+	t, err := json.Marshal(protoReq.Body)
+	if err != nil {
+		return nil, metadata, err
+	}
+
+	token, err := utils.GetTokenFromBearer(req.Header.Get("Authorization"))
+	if err != nil {
+		return nil, metadata, err
+	}
+
+	requ.AccessToken = token
+	requ.Action = "read"
+	requ.Object = "logistic_transport_vehicle"
+
+	*requ.Request.Body = string(t)
+	*requ.Request.Query = "{}"
+	requ.Scope = []string{
+		"whole",
+	}
+
+	newReq, err := Acl.Sanitize(ctx, requ)
+	if err != nil {
+		return nil, metadata, err
+	}
+
+	newQuery, err := utils.MetadataQuery(*newReq.Request.Query)
+	if err != nil {
+		return nil, metadata, err
+	}
+	protoReq.Q = newQuery
+
+	if newReq.Request.Body != nil {
+		t, err = json.Marshal(newReq.Request.Body)
+		if err != nil {
+			return nil, metadata, err
+		}
+		err = json.Unmarshal(t, protoReq.Body)
+		if err != nil {
+			return nil, metadata, err
+		}
+	}
+
 	{{- if and $AllowPatchFeature (eq (.HTTPMethod) "PATCH") (.FieldMaskField) (not (eq "*" .GetBodyFieldPath)) }}
 	if protoReq.{{.FieldMaskField}} == nil || len(protoReq.{{.FieldMaskField}}.GetPaths()) == 0 {
 			if fieldMask, err := runtime.FieldMaskFromRequestBody(newReader(), protoReq.{{.GetBodyFieldStructName}}); err != nil {
@@ -383,12 +428,6 @@ var (
 			}
 	}
 	{{end}}
-	t, err := json.Marshal(protoReq.Body)
-	if err != nil {
-		return nil, metadata, err
-	}
-	*requ.Request.Body = string(t)
-	*requ.Request.Query = req.URL.Query().Encode()
 {{end}}
 {{if .PathParams}}
 	var (
@@ -466,8 +505,32 @@ var (
 	metadata.HeaderMD = header
 	return stream, metadata, nil
 {{else}}
-	msg, err := client.{{.Method.GetName}}(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
+	// TODO
+	data, err := client.{{.Method.GetName}}(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	// return msg, metadata, err
+
+	decodedToken, err := Authentication.Decrypt(ctx, &authentication.AccessToken{
+		AccessToken: token,
+	})
+	items := []string{}
+
+	item, err := json.Marshal(data)
+	if err != nil {
+		return nil, metadata, err
+	}
+	items = append(items, string(item))
+
+	req2, err := utils.FilterAll("read", decodedToken, newReq.Grants, items)
+	if err != nil {
+		return nil, metadata, err
+	}
+	t, err = json.Marshal(req2)
+	if err != nil {
+		return nil, metadata, err
+	}
+	// TODO
+	return nil, metadata, err
+
 {{end}}
 }`))
 

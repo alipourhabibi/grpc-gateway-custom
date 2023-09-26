@@ -30,7 +30,9 @@ func New(reg *descriptor.Registry, useRequestContext bool, registerFuncSuffix st
 	allowPatchFeature, standalone bool) gen.Generator {
 	var imports []descriptor.GoPackage
 	for _, pkgpath := range []string{
+		configs.Confs.AuthenticationImport,
 		configs.Confs.AclImport,
+		configs.Confs.UtilImport,
 		"context",
 		"io",
 		"net/http",
