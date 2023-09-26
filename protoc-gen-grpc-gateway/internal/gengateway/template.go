@@ -531,13 +531,12 @@ var (
 	if err != nil {
 		return nil, metadata, err
 	}
-	response := {{ $bodyentity }}{}
+	response := {{ .Binding.Method.ResponseType.Name }}{}
 	err = json.Unmarshal(t, &response)
 	if err != nil {
-		return nil, metadata, err
+	     return nil, metadata, err
 	}
 	return &response, metadata, err
-
 {{end}}
 }`))
 
