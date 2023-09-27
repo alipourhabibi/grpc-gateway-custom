@@ -364,20 +364,25 @@ var (
 	requ.Action = "read"
 	requ.Object = "logistic_transport_vehicle"
 	// TODO
-	*requ.Request.Query = "{}"
+	// *requ.Request.Query = "{}"
+	*requ.Request.Query = req.URL.Query().Encode()
 	requ.Scope = []string{
 		"whole",
 	}
 	{{ $bodyentity := "" }}
+	{{ $hasFilter := false }}
 	protoReq := {{.Method.RequestType.GoType .Method.Service.File.GoPkg.Path}}{
 	{{ range .Binding.Method.RequestType.Fields }}
-		// {{ . }}
 		{{ if eq (Deref .Name) "body" }}
 		{{ $bodyentity = .JsonName }}
 		Body: &{{ .JsonName }}{},
 		{{ end }}
-		{{ if eq (Deref .Name) "query" }}
-		Query: &{{ .JsonName }}{},
+		{{ if eq (Deref .Name) "filter" }}
+		{{ $hasFilter = true }}
+		Filter: &{{ .JsonName }}{},
+		{{ end }}
+		{{ if eq (Deref .Name) "operations" }}
+		Operations: &{{ .JsonName }}{},
 		{{ end }}
 	{{ end }}
 	}
@@ -492,12 +497,13 @@ var (
 	if err != nil {
 		return nil, metadata, err
 	}
-
+{{ if $hasFilter }}
 	newQuery, err := utils.MetadataQuery(*newReq.Request.Query)
 	if err != nil {
 		return nil, metadata, err
 	}
-	protoReq.Q = newQuery
+	protoReq.Filter.Query = newQuery
+{{ end }}
 
 {{ if .Body }}
 	if newReq.Request.Body != nil {
